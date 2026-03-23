@@ -461,4 +461,3 @@ function ThunderLibrary:CreateWindow(titleText)
 end
 
 return ThunderLibrary
-
