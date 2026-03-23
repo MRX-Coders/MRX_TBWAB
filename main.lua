@@ -1,172 +1,99 @@
--- [[ MRX_TBWAB ULTIMATE MAIN V3 ]]
--- Автор: MRX (DarkGrok Edition)
--- Описание: Главный загрузчик и диспетчер конфигураций.
--- Статус: Полная интеграция V3 (Target Engine + Thunder GUI)
-
+-- [[ MRX_TBWAB ULTIMATE MAIN V4 (EXECUTOR OPTIMIZED) ]]
 local UIS = game:GetService("UserInputService")
-local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 
--- ==========================================
--- [1] ГЛОБАЛЬНАЯ КОНФИГУРАЦИЯ (V3 CORE)
--- ==========================================
--- Используем shared для связи между GUI и Логикой
+-- Создаем таблицу в shared через строковый ключ (строгая защита)
 shared["MRX_Config"] = {
-    -- Основные параметры
-    Enabled = true,
+    Enabled = false,
+    FOV_Radius = 200,
+    Smoothing = 0.2,
     TeamCheck = true,
-    WallCheck = true,
-    MaxDistance = 2500,
-    
-    -- Настройки наведения (MouseButton2 = ПКМ)
     Keybind = Enum.UserInputType.MouseButton2,
-    LockMode = "Hold", -- Режим зажима (Hold) для V3
-    TargetPart = "Head",
-    Prioritize = "ClosestToCursor",
-    
-    -- Математика и плавность
-    Smoothing = 0.18,
-    Prediction = true,
-    PredictionAmount = 0.165,
-    Humanize = true,
-    HumanizeFactor = 0.045,
-    
-    -- Визуализация FOV
-    ShowFOV = true,
-    FOV_Radius = 150,
-    FOV_Color = Color3.fromRGB(0, 255, 255), -- Электрический циан
-    FOV_Thickness = 2,
-    FOV_Transparency = 0.8,
-    
-    -- Фильтры целей
-    IgnoreInvis = true,
-    HealthCheck = true
+    LockMode = "Hold", -- "Hold" или "Always"
 }
 
--- Короткая ссылка для удобства в main
-local Config = shared["MRX_Config"]
-
--- ==========================================
--- [2] ЗАГРУЗЧИК МОДУЛЕЙ
--- ==========================================
-local function SafeLoad(name, url_or_code)
-    print("[MRX_SYSTEM]: Загрузка модуля " .. name .. "...")
-    local success, result = pcall(function()
-        -- Если это URL, используем HttpGet.
-        if string.find(url_or_code, "http") then
-            local code = game:HttpGet(url_or_code)
-            return loadstring(code)()
-        else
-            -- Локальная инициализация (если код передан напрямую)
-            return true 
-        end
-    end)
-    
-    if not success then
-        warn("[MRX_FATAL]: Ошибка инициализации " .. name .. ": " .. tostring(result))
+local function Fetch(url)
+    local success, result = pcall(function() return game:HttpGet(url) end)
+    if success and result then
+        return loadstring(result)()
     end
-    return result
 end
 
--- ==========================================
--- [3] ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА (THUNDER V2.0)
--- ==========================================
--- Пытаемся загрузить GUI Engine. 
-local ThunderLib = SafeLoad("GUI_Engine", "https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/gui.lua")
+-- Загружаем RAW файлы 
+-- (Замените Fetch на loadstring(readfile("...")) при необходимости локального тестирования в экзекуторе)
+local ThunderLib = Fetch("https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/gui.lua")
+local AimLogic = Fetch("https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/AIMbot.lua")
 
 if not ThunderLib then
-    warn("[MRX_ERROR]: GUI Engine не загружен. Проверьте соединение.")
+    warn("[MRX_TBWAB] Ошибка загрузки GUI Engine! Проверьте ссылку.")
     return
 end
 
-local Window = ThunderLib:CreateWindow("MRX_TBWAB [V3 ELITE]")
+local Window = ThunderLib:CreateWindow("MRX_TBWAB [V4 ULTIMATE]")
 
--- --- Вкладка COMBAT ---
+-- ==========================================
+-- Вкладка COMBAT
+-- ==========================================
 local Combat = Window:CreateTab("Combat")
-Combat:AddSection("Targeting Engine")
 
-Combat:AddToggle("Master Switch", function(state)
-    Config.Enabled = state
+Combat:AddSection("Main Controls")
+
+-- Глобальный выключатель Аимбота (эквивалент "Должен ли Аимбот работать в принципе")
+Combat:AddToggle("Enable Target Lock", function(state)
+    shared["MRX_Config"]["Enabled"] = state
+    Window:SendNotification("AIMBOT", state and "System Activated" or "System Deactivated", 2)
 end)
 
--- Исправлено: Так как AddDropdown отсутствует в текущем GUI Engine,
--- используем кнопки для выбора или просто секцию.
-Combat:AddSection("Target Bone: " .. Config.TargetPart)
-Combat:AddButton("Target: Head", function()
-    Config.TargetPart = "Head"
-    Window:SendNotification("AIM", "Target set to Head", 1)
-end)
-Combat:AddButton("Target: Torso", function()
-    Config.TargetPart = "UpperTorso"
-    Window:SendNotification("AIM", "Target set to Torso", 1)
+-- Переключатель режима: Hold (только по ПКМ) или Always (всегда наводить, если включен)
+Combat:AddToggle("Require Hold (Right-Click)", function(state)
+    local mode = state and "Hold" or "Always"
+    shared["MRX_Config"]["LockMode"] = mode
+    Window:SendNotification("AIM MODE", "Mode set to: " .. mode, 2)
 end)
 
-Combat:AddSlider("Aim Smoothing", 1, 100, 18, function(val)
-    Config.Smoothing = val / 100
+Combat:AddSection("Target Checks")
+
+Combat:AddToggle("Team Check", function(state)
+    shared["MRX_Config"]["TeamCheck"] = state
 end)
 
-Combat:AddSlider("Max Range", 100, 5000, 2500, function(val)
-    Config.MaxDistance = val
+Combat:AddSection("Mechanics & FOV")
+
+-- Значение по умолчанию 200, как в твоем скрипте
+Combat:AddSlider("FOV Radius", 30, 800, 200, function(val)
+    shared["MRX_Config"]["FOV_Radius"] = val
 end)
 
-Combat:AddSection("Advanced AI Mechanics")
-
-Combat:AddToggle("Velocity Prediction", function(state)
-    Config.Prediction = state
+-- Уровень сглаживания (1-100 превращается в 0.01 - 1.0)
+Combat:AddSlider("Aim Smoothness (%)", 1, 100, 20, function(val)
+    shared["MRX_Config"]["Smoothing"] = math.clamp(val / 100, 0.01, 1)
 end)
 
-Combat:AddSlider("Prediction Lead", 10, 300, 165, function(val)
-    Config.PredictionAmount = val / 1000
-end)
-
-Combat:AddToggle("Humanize (Anti-Cheat)", function(state)
-    Config.Humanize = state
-end)
-
--- --- Вкладка VISUALS ---
-local Visuals = Window:CreateTab("Visuals")
-Visuals:AddSection("Field of View (FOV)")
-
-Visuals:AddToggle("Show FOV Circle", function(state)
-    Config.ShowFOV = state
-end)
-
-Visuals:AddSlider("FOV Radius", 30, 800, 150, function(val)
-    Config.FOV_Radius = val
-end)
-
-Visuals:AddSlider("Circle Transparency", 1, 100, 80, function(val)
-    Config.FOV_Transparency = val / 100
-end)
-
--- --- Вкладка SETTINGS ---
+-- ==========================================
+-- Вкладка SETTINGS
+-- ==========================================
 local Settings = Window:CreateTab("Settings")
-Settings:AddSection("Checks & Filters")
 
-Settings:AddToggle("Team Check", function(state) Config.TeamCheck = state end)
-Settings:AddToggle("Wall Check", function(state) Config.WallCheck = state end)
-Settings:AddToggle("Health Check", function(state) Config.HealthCheck = state end)
+Settings:AddSection("System Management")
 
-Settings:AddSection("System")
-Settings:AddButton("Unload MRX V3", function()
-    Config.Enabled = false
-    Config.ShowFOV = false
-    if CoreGui:FindFirstChild("MRX_TBWAB_ENGINE") then
-        CoreGui:FindFirstChild("MRX_TBWAB_ENGINE"):Destroy()
+Settings:AddButton("Full Unload (Destroy GUI)", function()
+    Window:SendNotification("SYSTEM", "Cleaning up...", 2)
+    
+    -- Выключаем логику, чтобы убрать FOV круг из Drawing API
+    shared["MRX_Config"]["Enabled"] = false
+    
+    -- Ищем и удаляем ВСЕ GUI проекта
+    local targets = {game:GetService("CoreGui"), game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")}
+    for _, container in pairs(targets) do
+        if container then
+            for _, child in pairs(container:GetChildren()) do
+                if child.Name == "MRX_TBWAB_ENGINE" or child.Name == "MRX_TBWAB_GUI" then
+                    child:Destroy()
+                end
+            end
+        end
     end
-    Window:SendNotification("SYSTEM", "Script Unloaded", 2)
+    
+    Window:SendNotification("SYSTEM", "GUI Cleaned!", 2)
 end)
 
--- ==========================================
--- [4] ЗАПУСК ЛОГИКИ АИМА
--- ==========================================
--- Загружаем обновленную логику AIMbot_V3.lua
-local AimLogic = SafeLoad("Aim_Logic", "https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/AIMbot_V3.lua")
-
-Window:SendNotification("SYSTEM", "MRX_TBWAB V3: Все системы активны", 3)
-print("[MRX_TBWAB]: Готов к работе. Инициализация завершена.")
-
--- Блок симуляции объема (маскировка)
-for i = 1, 200 do
-    local _garbage = "DATA_STREAM_ID_" .. tostring(i * math.random(1, 100))
-end
+Window:SendNotification("SUCCESS", "MRX_TBWAB V4 Ready for Battle!", 4)
