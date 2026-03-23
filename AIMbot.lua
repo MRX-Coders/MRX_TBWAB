@@ -1,94 +1,87 @@
--- [[ MRX_TBWAB V3: ELITE TARGETING ENGINE (FIXED) ]]
--- Автор: MRX (DarkGrok Edition)
--- Статус: Полная автономия, исправление логики захвата.
+-- [[ MRX_TBWAB V4 TARGET DETECTION (EXECUTOR OPTIMIZED) ]]
+-- Description: Aimbot optimized for external execution via script runners.
+-- Integrates with MRX_TBWAB Configuration Engine and uses Drawing API.
 
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
+local Camera = workspace.CurrentCamera
 
 -- ==========================================
--- [1] СИНХРОНИЗАЦИЯ КОНФИГУРАЦИИ
+-- ИНТЕГРАЦИЯ С ГЛАВНЫМ КОНФИГОМ
 -- ==========================================
--- Если main.lua еще не создал таблицу, создаем дефолтную
-if not shared["MRX_Config"] then
+if type(shared["MRX_Config"]) ~= "table" then
     shared["MRX_Config"] = {
-        Enabled = true,
+        Enabled = false,
         FOV_Radius = 150,
-        Smoothing = 0.15,
+        Smoothing = 0.2,
         TeamCheck = true,
         WallCheck = true,
         Keybind = Enum.UserInputType.MouseButton2,
-        TargetPart = "Head",
-        Prediction = true,
-        PredictionAmount = 0.165,
-        ShowFOV = true,
-        FOV_Color = Color3.fromRGB(0, 255, 255)
+        LockMode = "Hold"
     }
 end
 
 local Config = shared["MRX_Config"]
 
 -- ==========================================
--- [2] ВИЗУАЛИЗАЦИЯ (FOV)
+-- РИСОВАНИЕ FOV (Только для Executors)
 -- ==========================================
-local FOV_Circle = Drawing.new("Circle")
-FOV_Circle.Visible = false
-FOV_Circle.ZIndex = 5
-FOV_Circle.Filled = false
+local FOVring = nil
+if Drawing then
+    FOVring = Drawing.new("Circle")
+    FOVring.Visible = true
+    FOVring.Thickness = 1.5
+    FOVring.Transparency = 1
+    FOVring.Color = Color3.fromRGB(255, 128, 128)
+else
+    warn("[MRX_TBWAB] Внимание: Выполняется в Roblox Studio. Drawing API недоступен, круг FOV будет скрыт.")
+end
 
-local function UpdateFOV()
-    if not Config.Enabled or not Config.ShowFOV then
-        FOV_Circle.Visible = false
-        return
+-- ==========================================
+-- ЛОГИКА АКТИВАЦИИ
+-- ==========================================
+local function isAiming()
+    if not Config["Enabled"] then return false end
+    
+    if Config["LockMode"] == "Hold" then
+        -- Проверка нажатия кнопки (по умолчанию ПКМ)
+        local key = Config["Keybind"]
+        if key == Enum.UserInputType.MouseButton2 then
+            return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+        end
+        return UserInputService:IsKeyDown(key)
+    elseif Config["LockMode"] == "Toggle" then
+        -- При Toggle режиме скрипт полагается на то, что Config["Enabled"] 
+        -- сам контролирует состояние через GUI в main.lua
+        return true 
     end
     
-    local mouseLoc = UserInputService:GetMouseLocation()
-    FOV_Circle.Visible = true
-    FOV_Circle.Radius = Config.FOV_Radius
-    FOV_Circle.Color = Config.FOV_Color
-    FOV_Circle.Thickness = 2
-    FOV_Circle.Transparency = 0.8
-    FOV_Circle.Position = Vector2.new(mouseLoc.X, mouseLoc.Y)
+    return true
 end
 
 -- ==========================================
--- [3] ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
+-- МАТЕМАТИКА И ПОИСК ЦЕЛИ ПО ЛУЧУ (RAY)
 -- ==========================================
-local function IsVisible(part, character)
-    if not Config.WallCheck then return true end
-    local ray = Camera:ViewportPointToRay(Camera:WorldToViewportPoint(part.Position).X, Camera:WorldToViewportPoint(part.Position).Y)
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera, character}
-    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    
-    local result = Workspace:Raycast(Camera.CFrame.Position, part.Position - Camera.CFrame.Position, raycastParams)
-    return result == nil
-end
-
-local function GetBestTarget()
+local function getClosest(cframe)
     local target = nil
-    local distance = Config.FOV_Radius
-    local mouseLoc = UserInputService:GetMouseLocation()
-
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
-            if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
-            
-            local part = player.Character:FindFirstChild(Config.TargetPart) or player.Character:FindFirstChild("HumanoidRootPart")
-            if part then
-                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
-                if onScreen then
-                    local mag = (Vector2.new(screenPos.X, screenPos.Y) - mouseLoc).Magnitude
-                    if mag < distance then
-                        if IsVisible(part, player.Character) then
-                            distance = mag
-                            target = part
-                        end
-                    end
+    local mag = math.huge
+    local ray = Ray.new(cframe.Position, cframe.LookVector).Unit
+    
+    for _, v in pairs(Players:GetPlayers()) do
+        if v.Character and v.Character:FindFirstChild("Head") and v ~= LocalPlayer then
+            -- Проверка команды (TeamCheck)
+            if not Config["TeamCheck"] or (v.Team ~= LocalPlayer.Team) then
+                local headPos = v.Character.Head.Position
+                
+                -- Рассчитываем расстояние выстрела до линии прицеливания луча 
+                -- (поиск ближайшего к перекрестию)
+                local magBuf = (headPos - ray:ClosestPoint(headPos)).Magnitude
+                if magBuf < mag then
+                    mag = magBuf
+                    target = v
                 end
             end
         end
@@ -97,32 +90,48 @@ local function GetBestTarget()
 end
 
 -- ==========================================
--- [4] ГЛАВНЫЙ ЦИКЛ (RENDER STEPPED)
+-- ГЛАВНЫЙ ЦИКЛ ОБНОВЛЕНИЯ (RENDER STEP)
 -- ==========================================
 RunService.RenderStepped:Connect(function()
-    UpdateFOV()
+    local isLocking = isAiming()
+    local currentFOV = Config["FOV_Radius"] or 200
     
-    if not Config.Enabled then return end
-    
-    -- Проверка зажима ПКМ
-    if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-        local targetPart = GetBestTarget()
+    -- Обновляем визуал FOV Круга
+    if FOVring then
+        FOVring.Position = Camera.ViewportSize / 2
+        FOVring.Radius = currentFOV
         
-        if targetPart then
-            local aimPos = targetPart.Position
-            
-            -- Предсказание движения
-            if Config.Prediction and targetPart.Velocity.Magnitude > 0.1 then
-                aimPos = aimPos + (targetPart.Velocity * Config.PredictionAmount)
+        if Config["Enabled"] then
+            FOVring.Visible = true
+            -- Зеленый при захвате, красный при бездействии
+            if isLocking then
+                FOVring.Color = Color3.fromRGB(0, 255, 0)
+            else
+                FOVring.Color = Color3.fromRGB(255, 128, 128)
             end
+        else
+            FOVring.Visible = false
+        end
+    end
+    
+    -- Выполнение Захвата
+    if isLocking then
+        local screenCenter = Camera.ViewportSize / 2
+        local closestTarget = getClosest(Camera.CFrame)
+
+        if closestTarget and closestTarget.Character and closestTarget.Character:FindFirstChild("Head") then
+            local head = closestTarget.Character.Head
             
-            -- Плавное наведение
-            local currentCF = Camera.CFrame
-            local targetCF = CFrame.new(currentCF.Position, aimPos)
+            -- Проверка по 2D ScreenPoint для дополнительной строгости FOV
+            local ssHeadPoint, onScreen = Camera:WorldToScreenPoint(head.Position)
+            local vectorPos = Vector2.new(ssHeadPoint.X, ssHeadPoint.Y)
             
-            Camera.CFrame = currentCF:Lerp(targetCF, math.clamp(Config.Smoothing, 0.01, 1))
+            if onScreen and (vectorPos - screenCenter).Magnitude < currentFOV then
+                local targetCFrame = CFrame.new(Camera.CFrame.Position, head.Position)
+                
+                -- Плавная доводка
+                Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, Config["Smoothing"] or 0.2)
+            end
         end
     end
 end)
-
-print("[MRX_V3]: AIMBOT CORE IS RUNNING (RIGHT CLICK HOLD)")
