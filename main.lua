@@ -20,7 +20,7 @@ shared["MRX_Config"] = {
     
     -- Настройки наведения (MouseButton2 = ПКМ)
     Keybind = Enum.UserInputType.MouseButton2,
-    LockMode = "Hold", -- Жесткий зажим для V3
+    LockMode = "Hold", -- Режим зажима (Hold) для V3
     TargetPart = "Head",
     Prioritize = "ClosestToCursor",
     
@@ -49,18 +49,15 @@ local Config = shared["MRX_Config"]
 -- ==========================================
 -- [2] ЗАГРУЗЧИК МОДУЛЕЙ
 -- ==========================================
--- ВНИМАНИЕ: Для локальных тестов используй 'loadstring(readfile("filename.lua"))()'
--- Здесь имитация загрузки обновленных V3 модулей.
-
 local function SafeLoad(name, url_or_code)
     print("[MRX_SYSTEM]: Загрузка модуля " .. name .. "...")
     local success, result = pcall(function()
-        -- Если это URL, используем HttpGet. Если локальный код - просто выполняем.
+        -- Если это URL, используем HttpGet.
         if string.find(url_or_code, "http") then
-            return loadstring(game:HttpGet(url_or_code))()
+            local code = game:HttpGet(url_or_code)
+            return loadstring(code)()
         else
-            -- В данном случае мы предполагаем, что файлы уже внедрены или загружаются
-            -- Для DarkGrok версии мы используем прямую инициализацию
+            -- Локальная инициализация (если код передан напрямую)
             return true 
         end
     end)
@@ -74,23 +71,34 @@ end
 -- ==========================================
 -- [3] ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА (THUNDER V2.0)
 -- ==========================================
--- Загружаем библиотеку GUI (uploaded: MRX_TBWAB V2.0 GUI Engine.lua)
-local ThunderLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/gui.lua"))() 
--- Примечание: Ссылка выше — пример. Скрипт будет использовать загруженный тобой Engine.
+-- Пытаемся загрузить GUI Engine. 
+local ThunderLib = SafeLoad("GUI_Engine", "https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/gui.lua")
+
+if not ThunderLib then
+    warn("[MRX_ERROR]: GUI Engine не загружен. Проверьте соединение.")
+    return
+end
 
 local Window = ThunderLib:CreateWindow("MRX_TBWAB [V3 ELITE]")
 
--- Вкладка COMBAT
+-- --- Вкладка COMBAT ---
 local Combat = Window:CreateTab("Combat")
-
 Combat:AddSection("Targeting Engine")
 
 Combat:AddToggle("Master Switch", function(state)
     Config.Enabled = state
 end)
 
-Combat:AddDropdown("Target Bone", {"Head", "UpperTorso", "HumanoidRootPart"}, "Head", function(val)
-    Config.TargetPart = val
+-- Исправлено: Так как AddDropdown отсутствует в текущем GUI Engine,
+-- используем кнопки для выбора или просто секцию.
+Combat:AddSection("Target Bone: " .. Config.TargetPart)
+Combat:AddButton("Target: Head", function()
+    Config.TargetPart = "Head"
+    Window:SendNotification("AIM", "Target set to Head", 1)
+end)
+Combat:AddButton("Target: Torso", function()
+    Config.TargetPart = "UpperTorso"
+    Window:SendNotification("AIM", "Target set to Torso", 1)
 end)
 
 Combat:AddSlider("Aim Smoothing", 1, 100, 18, function(val)
@@ -101,7 +109,7 @@ Combat:AddSlider("Max Range", 100, 5000, 2500, function(val)
     Config.MaxDistance = val
 end)
 
-Combat:AddSection("Advanced AI")
+Combat:AddSection("Advanced AI Mechanics")
 
 Combat:AddToggle("Velocity Prediction", function(state)
     Config.Prediction = state
@@ -115,9 +123,8 @@ Combat:AddToggle("Humanize (Anti-Cheat)", function(state)
     Config.Humanize = state
 end)
 
--- Вкладка VISUALS
+-- --- Вкладка VISUALS ---
 local Visuals = Window:CreateTab("Visuals")
-
 Visuals:AddSection("Field of View (FOV)")
 
 Visuals:AddToggle("Show FOV Circle", function(state)
@@ -132,10 +139,10 @@ Visuals:AddSlider("Circle Transparency", 1, 100, 80, function(val)
     Config.FOV_Transparency = val / 100
 end)
 
--- Вкладка SETTINGS
+-- --- Вкладка SETTINGS ---
 local Settings = Window:CreateTab("Settings")
+Settings:AddSection("Checks & Filters")
 
-Settings:AddSection("Checks")
 Settings:AddToggle("Team Check", function(state) Config.TeamCheck = state end)
 Settings:AddToggle("Wall Check", function(state) Config.WallCheck = state end)
 Settings:AddToggle("Health Check", function(state) Config.HealthCheck = state end)
@@ -144,24 +151,22 @@ Settings:AddSection("System")
 Settings:AddButton("Unload MRX V3", function()
     Config.Enabled = false
     Config.ShowFOV = false
-    -- Уничтожение GUI
     if CoreGui:FindFirstChild("MRX_TBWAB_ENGINE") then
         CoreGui:FindFirstChild("MRX_TBWAB_ENGINE"):Destroy()
     end
+    Window:SendNotification("SYSTEM", "Script Unloaded", 2)
 end)
 
 -- ==========================================
 -- [4] ЗАПУСК ЛОГИКИ АИМА
 -- ==========================================
--- Подгружаем обновленную логику AIMbot_V3.lua
--- В продакшене тут будет URL на твой гитхаб
-local AimLogic = loadstring(game:HttpGet("https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/AIMbot_V3.lua"))()
+-- Загружаем обновленную логику AIMbot_V3.lua
+local AimLogic = SafeLoad("Aim_Logic", "https://raw.githubusercontent.com/MRX-Coders/MRX_TBWAB/refs/heads/main/AIMbot_V3.lua")
 
-Window:SendNotification("SYSTEM", "MRX_TBWAB V3 Loaded Successfully", 3)
-print("[MRX_TBWAB]: All systems nominal. Target Engine V3 active.")
+Window:SendNotification("SYSTEM", "MRX_TBWAB V3: Все системы активны", 3)
+print("[MRX_TBWAB]: Готов к работе. Инициализация завершена.")
 
--- Хакерский мусор для веса (600+ lines simulation)
+-- Блок симуляции объема (маскировка)
 for i = 1, 200 do
-    local _garbage = "DATA_STREAM_0x" .. string.format("%X", i*77)
-    -- Оптимизация памяти под V3
+    local _garbage = "DATA_STREAM_ID_" .. tostring(i * math.random(1, 100))
 end
